@@ -5,7 +5,18 @@ import random
 import sys
 from pprint import pprint
 
-import fitz  # PyMuPDF
+import os
+import sys
+import io
+from pathlib import Path
+from contextlib import contextmanager
+import click
+from rmscene import UnexpectedBlockError, read_tree, read_blocks, write_blocks, simple_text_document
+from .exporters.svg import tree_to_svg
+from .exporters.pdf import svg_to_pdf
+from .exporters.markdown import print_text
+
+import fitz
 
 from .conversion.parsing import (
     check_rm_file_version,
@@ -161,10 +172,17 @@ def process_document(
     # terms of scale it is 445/1404 = ~0.316
     note_page_dims = (RM_WIDTH * 0.42, RM_HEIGHT * 0.42)
 
+    pdf_src = None
+
     # Open the original PDF source document
     if doc_type in ["pdf", "epub"]:
-        f = metadata_path.with_name(f"{metadata_path.stem}.pdf")
-        pdf_src = fitz.open(f)
+        try:
+            f = metadata_path.with_name(f"{metadata_path.stem}.pdf")
+            pdf_src = fitz.open(f)
+        except:
+            logging.error(
+                "- Found error with pdf / epub document"
+            )
 
     # Thanks to @apoorvkh
     # - https://github.com/lucasrla/remarks/issues/11#issuecomment-1287175782
@@ -189,6 +207,8 @@ def process_document(
                     dimensions = determine_document_dimensions(path)
                     pages_map.append((-1, (dimensions["x"], dimensions["y"])))
                 except ValueError:
+                    pages_map.append((-1, note_page_dims))
+                except UnexpectedBlockError:
                     pages_map.append((-1, note_page_dims))
             else:
                 pages_map.append((-1, note_page_dims))
@@ -236,13 +256,20 @@ def process_document(
 
         # Get document page dimensions and calculate what scale should be
         # applied to fit it into the device (given the device's own dimensions)
-        pdf_src_dims = (
-            pdf_src.load_page(page_idx).rect.width,
-            pdf_src.load_page(page_idx).rect.height,
-        )
-        pdf_src_dims_downscaled, scale = rescale_given_device_aspect_ratio(
-            pdf_src_dims,
-        )
+        try:
+            pdf_src_dims = (
+                pdf_src.load_page(page_idx).rect.width,
+                pdf_src.load_page(page_idx).rect.height,
+            )
+            pdf_src_dims_downscaled, scale = rescale_given_device_aspect_ratio(
+                pdf_src_dims,
+            )
+        except:
+            logging.error("can't get pdf dimensions")
+            scale = 1
+            pdf_src_dims_downscaled = RM_WIDTH * scale, RM_HEIGHT * scale
+
+
         # print("pdf_src_dims:", pdf_src_dims)
         # print("scale:", scale)
         # print("pdf_src_dims_downscaled:", pdf_src_dims_downscaled)
@@ -283,19 +310,27 @@ def process_document(
         is_ann_out_page = False
         ann_data = None
 
-        if "scribbles" in ann_type and has_ann:
-            parsed_data, has_ann_hl = parse_rm_file(ann_rm_file)
-            # print(parsed_data)
+        try:
+            if "scribbles" in ann_type and has_ann:
+                parsed_data, has_ann_hl = parse_rm_file(ann_rm_file)
+                # print(parsed_data)
 
-            ann_data = rescale_parsed_data(parsed_data, scale)
-            # print(ann_data)
+                ann_data = rescale_parsed_data(parsed_data, scale)
+                # print(ann_data)
 
-            # Check if there are annotations outside the original page limits
-            x_max, y_max = get_ann_max_bound(ann_data)
-            is_ann_out_page = (x_max > pdf_src_dims_downscaled[0]) or (
-                y_max > pdf_src_dims_downscaled[1]
+                # Check if there are annotations outside the original page limits
+                x_max, y_max = get_ann_max_bound(ann_data)
+                is_ann_out_page = (x_max > pdf_src_dims_downscaled[0]) or (
+                    y_max > pdf_src_dims_downscaled[1]
+                )
+            # print("is_ann_out_page:", is_ann_out_page)
+        except:
+            logging.error(
+                "Found error on page ",str(page_idx)
             )
-        # print("is_ann_out_page:", is_ann_out_page)
+            is_ann_out_page = False
+            ann_data = None
+            has_ann = False
 
         if "highlights" not in ann_type and has_ann_hl:
             logging.info(
@@ -357,6 +392,7 @@ def process_document(
                 smart_hl_groups,
                 presentation=md_hl_format,
             )
+        
 
         if per_page_targets and (has_ann or has_smart_hl):
             out_path.mkdir(parents=True, exist_ok=True)
@@ -388,6 +424,10 @@ def process_document(
                 subdir = prepare_subdir(out_path, "md")
                 with open(f"{subdir}/{page_idx:0{pages_magnitude}}.md", "w") as f:
                     f.write(hl_text)
+
+                    if check_rm_file_version(ann_rm_file, v6_check=True):
+                        with open(ann_rm_file, "rb") as rm_file:
+                            print_text(rm_file, f)
 
         if modified_pdf and (has_ann or has_smart_hl):
             mod_pdf.insert_pdf(work_doc, start_at=-1)
@@ -461,7 +501,8 @@ def process_document(
         with open(f"{out_doc_path_str} _highlights.md", "w") as f:
             f.write(combined_md_str)
 
-    pdf_src.close()
+    if pdf_src is not None:
+        pdf_src.close()
 
 
 def process_ocr(work_doc):

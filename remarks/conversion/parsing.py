@@ -188,7 +188,7 @@ def determine_document_dimensions(file_path):
     }
 
 
-def check_rm_file_version(file_path):
+def check_rm_file_version(file_path, v6_check=False):
     with open(file_path, "rb") as f:
         data = f.read()
 
@@ -213,6 +213,9 @@ def check_rm_file_version(file_path):
         #     f"- Found a v6 .rm file ({file_path}) created with reMarkable software >= 3.0. Unfortunately we do not support this version yet. More info: https://github.com/lucasrla/remarks/issues/58"
         # )
 
+    if v6_check is True:
+        return False
+    
     if (not is_v3 and not is_v5) or nlayers < 1:
         logging.error(
             f"- .rm file ({file_path}) doesn't look like a valid one: <header={header}><nlayers={nlayers}>"
