@@ -44,21 +44,6 @@ def format_paragraph(line):
 def formatted_lines(doc):
     lines = []
     for p in doc.contents:
-        #for line in p.contents:
-            #
-            #if line.contents:
-            #    for linePart in line.contents:
-            #        lineText =""
-            #        if isinstance(line, BoldSpan):
-            #            lines.append((p.style.value, "**"+str(linePart)+"**"))
-            #        elif isinstance(line, ItalicSpan):
-            #            lines.append((p.style.value, "~~"+str(linePart)+"~~"))
-            #        else:
-            #            lineText=lineText+str(linePart)
-            #        lines.append((p.style.value, lineText))
-            #lines.append((p.style.value, str(line)+"\n"))
-            #lines.append((p.style.value, repr(line)+"\n"))
-        
         lines.append((p.style.value, format_paragraph(p.contents)+"\n"))
     return lines
 
